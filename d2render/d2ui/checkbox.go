@@ -1,11 +1,9 @@
 package d2ui
 
 import (
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2enum"
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2interface"
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2resource"
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2datadict"
+	"github.com/OpenDiablo2/D2Shared/d2common/d2resource"
 	"github.com/OpenDiablo2/OpenDiablo2/d2render"
+	"github.com/OpenDiablo2/OpenDiablo2/d2render/d2surface"
 	"github.com/hajimehoshi/ebiten"
 )
 
@@ -13,14 +11,14 @@ type Checkbox struct {
 	x, y          int
 	checkState    bool
 	visible       bool
-	width, height uint32
+	width, height int
 	Image         *ebiten.Image
 	checkedImage  *ebiten.Image
 	onClick       func()
 	enabled       bool
 }
 
-func CreateCheckbox(fileProvider d2interface.FileProvider, checkState bool) Checkbox {
+func CreateCheckbox(checkState bool) Checkbox {
 	result := Checkbox{
 		checkState: checkState,
 		visible:    true,
@@ -28,31 +26,38 @@ func CreateCheckbox(fileProvider d2interface.FileProvider, checkState bool) Chec
 		height:     0,
 		enabled:    true,
 	}
-	checkboxSprite := d2render.CreateSprite(fileProvider.LoadFile(d2resource.Checkbox), d2datadict.Palettes[d2enum.Fechar])
-	result.width, result.height = checkboxSprite.GetFrameSize(0)
-	checkboxSprite.MoveTo(0, 0)
+	checkboxSprite, _ := d2render.LoadSprite(d2resource.Checkbox, d2resource.PaletteFechar)
+	result.width, result.height, _ = checkboxSprite.GetFrameSize(0)
+	checkboxSprite.SetPosition(0, 0)
 
 	result.Image, _ = ebiten.NewImage(int(result.width), int(result.height), ebiten.FilterNearest)
-	checkboxSprite.DrawSegments(result.Image, 1, 1, 0)
+	surface := d2surface.CreateSurface(result.Image)
+	checkboxSprite.RenderSegmented(surface, 1, 1, 0)
 
 	result.checkedImage, _ = ebiten.NewImage(int(result.width), int(result.height), ebiten.FilterNearest)
-	checkboxSprite.DrawSegments(result.checkedImage, 1, 1, 1)
+	checkedSurface := d2surface.CreateSurface(result.checkedImage)
+	checkboxSprite.RenderSegmented(checkedSurface, 1, 1, 1)
 	return result
 }
 
-func (v Checkbox) Draw(target *ebiten.Image) {
-	opts := &ebiten.DrawImageOptions{
-		CompositeMode: ebiten.CompositeModeSourceAtop,
-		Filter:        ebiten.FilterNearest,
-	}
-	opts.GeoM.Translate(float64(v.x), float64(v.y))
-	if v.checkState == false {
-		target.DrawImage(v.Image, opts)
+func (v *Checkbox) Render(target *d2surface.Surface) {
+	target.PushCompositeMode(ebiten.CompositeModeSourceAtop)
+	target.PushTranslation(v.x, v.y)
+	target.PushFilter(ebiten.FilterNearest)
+	defer target.PopN(3)
+
+	if v.checkState {
+		target.Render(v.checkedImage)
 	} else {
-		target.DrawImage(v.checkedImage, opts)
+		target.Render(v.Image)
 	}
 }
-func (v Checkbox) GetEnabled() bool {
+
+func (v *Checkbox) Advance(elapsed float64) {
+
+}
+
+func (v *Checkbox) GetEnabled() bool {
 	return v.enabled
 }
 
@@ -60,18 +65,18 @@ func (v *Checkbox) SetEnabled(enabled bool) {
 	v.enabled = enabled
 }
 
-func (v Checkbox) SetPressed(pressed bool) {
+func (v *Checkbox) SetPressed(pressed bool) {
 }
 
 func (v *Checkbox) SetCheckState(checkState bool) {
 	v.checkState = checkState
 }
 
-func (v Checkbox) GetCheckState() bool {
+func (v *Checkbox) GetCheckState() bool {
 	return v.checkState
 }
 
-func (v Checkbox) GetPressed() bool {
+func (v *Checkbox) GetPressed() bool {
 	return v.checkState
 }
 
@@ -87,19 +92,19 @@ func (v *Checkbox) Activate() {
 	v.onClick()
 }
 
-func (v Checkbox) GetLocation() (int, int) {
+func (v *Checkbox) GetPosition() (int, int) {
 	return v.x, v.y
 }
 
-func (v Checkbox) GetSize() (uint32, uint32) {
+func (v *Checkbox) GetSize() (int, int) {
 	return v.width, v.height
 }
 
-func (v Checkbox) GetVisible() bool {
+func (v *Checkbox) GetVisible() bool {
 	return v.visible
 }
 
-func (v *Checkbox) MoveTo(x int, y int) {
+func (v *Checkbox) SetPosition(x int, y int) {
 	v.x = x
 	v.y = y
 }

@@ -8,21 +8,18 @@ import (
 	"path"
 	"strings"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2resource"
+	"github.com/OpenDiablo2/D2Shared/d2common/d2resource"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2datadict"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2enum"
-
+	"github.com/OpenDiablo2/OpenDiablo2/d2asset"
 	"github.com/OpenDiablo2/OpenDiablo2/d2render"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2interface"
+	"github.com/OpenDiablo2/OpenDiablo2/d2corecommon/d2coreinterface"
 
+	"github.com/OpenDiablo2/D2Shared/d2common"
+	dh "github.com/OpenDiablo2/D2Shared/d2helper"
 	"github.com/OpenDiablo2/OpenDiablo2/d2audio"
-	"github.com/OpenDiablo2/OpenDiablo2/d2common"
-	dh "github.com/OpenDiablo2/OpenDiablo2/d2helper"
+	"github.com/OpenDiablo2/OpenDiablo2/d2render/d2surface"
 	"github.com/OpenDiablo2/OpenDiablo2/d2render/d2ui"
-	"github.com/hajimehoshi/ebiten"
 )
 
 type labelItem struct {
@@ -35,9 +32,8 @@ type labelItem struct {
 type Credits struct {
 	uiManager          *d2ui.Manager
 	soundManager       *d2audio.Manager
-	fileProvider       d2interface.FileProvider
-	sceneProvider      d2interface.SceneProvider
-	creditsBackground  d2render.Sprite
+	sceneProvider      d2coreinterface.SceneProvider
+	creditsBackground  *d2render.Sprite
 	exitButton         d2ui.Button
 	creditsText        []string
 	labels             []*labelItem
@@ -47,9 +43,8 @@ type Credits struct {
 }
 
 // CreateCredits creates an instance of the credits scene
-func CreateCredits(fileProvider d2interface.FileProvider, sceneProvider d2interface.SceneProvider, uiManager *d2ui.Manager, soundManager *d2audio.Manager) *Credits {
+func CreateCredits(sceneProvider d2coreinterface.SceneProvider, uiManager *d2ui.Manager, soundManager *d2audio.Manager) *Credits {
 	result := &Credits{
-		fileProvider:       fileProvider,
 		uiManager:          uiManager,
 		soundManager:       soundManager,
 		sceneProvider:      sceneProvider,
@@ -67,7 +62,7 @@ func (v *Credits) LoadContributors() []string {
 	contributors := []string{}
 	file, err := os.Open(path.Join("./", "CONTRIBUTORS"))
 	if err != nil {
-		log.Fatal("CONTRIBUTORS file is missing")
+		log.Print("CONTRIBUTORS file is missing")
 	}
 	defer file.Close()
 
@@ -82,18 +77,22 @@ func (v *Credits) LoadContributors() []string {
 func (v *Credits) Load() []func() {
 	return []func(){
 		func() {
-			v.creditsBackground = d2render.CreateSprite(v.fileProvider.LoadFile(d2resource.CreditsBackground), d2datadict.Palettes[d2enum.Sky])
-			v.creditsBackground.MoveTo(0, 0)
+			v.creditsBackground, _ = d2render.LoadSprite(d2resource.CreditsBackground, d2resource.PaletteSky)
+			v.creditsBackground.SetPosition(0, 0)
 		},
 		func() {
-			v.exitButton = d2ui.CreateButton(d2ui.ButtonTypeMedium, v.fileProvider, d2common.TranslateString("#970"))
-			v.exitButton.MoveTo(30, 550)
+			v.exitButton = d2ui.CreateButton(d2ui.ButtonTypeMedium, d2common.TranslateString("#970"))
+			v.exitButton.SetPosition(33, 543)
 			v.exitButton.OnActivated(func() { v.onExitButtonClicked() })
 			v.uiManager.AddWidget(&v.exitButton)
 		},
 		func() {
-			fileData, _ := dh.Utf16BytesToString(v.fileProvider.LoadFile(d2resource.CreditsText)[2:])
-			v.creditsText = strings.Split(fileData, "\r\n")
+			fileData, err := d2asset.LoadFile(d2resource.CreditsText)
+			if err != nil {
+				panic(err)
+			}
+			creditData, _ := dh.Utf16BytesToString(fileData[2:])
+			v.creditsText = strings.Split(creditData, "\r\n")
 			for i := range v.creditsText {
 				v.creditsText[i] = strings.Trim(v.creditsText[i], " ")
 			}
@@ -108,20 +107,20 @@ func (v *Credits) Unload() {
 }
 
 // Render renders the credits scene
-func (v *Credits) Render(screen *ebiten.Image) {
-	v.creditsBackground.DrawSegments(screen, 4, 3, 0)
+func (v *Credits) Render(screen *d2surface.Surface) {
+	v.creditsBackground.RenderSegmented(screen, 4, 3, 0)
 	for _, label := range v.labels {
 		if label.Available {
 			continue
 		}
-		label.Label.Draw(screen)
+		label.Label.Render(screen)
 	}
 }
 
 const secondsPerCycle = float64(0.02)
 
 // Update runs the update logic on the credits scene
-func (v *Credits) Update(tickTime float64) {
+func (v *Credits) Advance(tickTime float64) {
 	v.cycleTime += tickTime
 	for v.cycleTime >= secondsPerCycle {
 		v.cycleTime -= secondsPerCycle
@@ -144,7 +143,7 @@ func (v *Credits) Update(tickTime float64) {
 }
 
 func (v *Credits) onExitButtonClicked() {
-	mainMenu := CreateMainMenu(v.fileProvider, v.sceneProvider, v.uiManager, v.soundManager)
+	mainMenu := CreateMainMenu(v.sceneProvider, v.uiManager, v.soundManager)
 	mainMenu.ShowTrademarkScreen = false
 	v.sceneProvider.SetNextScene(mainMenu)
 }
@@ -157,8 +156,11 @@ func (v *Credits) addNextItem() {
 
 	text := v.creditsText[0]
 	v.creditsText = v.creditsText[1:]
-	if len(text) == 0 {
-		v.cyclesTillNextLine = 18
+	if len(text) == 0 && v.creditsText[0][0] != '*' {
+		v.cyclesTillNextLine = 19
+		return
+	} else if len(text) == 0 && v.creditsText[0][0] == '*' {
+		v.cyclesTillNextLine = 38
 		return
 	}
 	isHeading := text[0] == '*'
@@ -176,7 +178,7 @@ func (v *Credits) addNextItem() {
 		isDoubled = true
 
 		// Gotta go side by side
-		label.MoveTo(390-int(width), 605)
+		label.SetPosition(400-int(width), 605)
 
 		text2 := v.creditsText[0]
 		v.creditsText = v.creditsText[1:]
@@ -185,23 +187,23 @@ func (v *Credits) addNextItem() {
 		label2 := v.getNewFontLabel(isHeading)
 		label2.SetText(text2)
 
-		label2.MoveTo(410, 605)
+		label2.SetPosition(410, 605)
 	} else {
-		label.MoveTo(400-int(width/2), 605)
+		label.SetPosition(405-int(width/2), 605)
 	}
 
 	if isHeading && isNextHeading {
-		v.cyclesTillNextLine = 40
+		v.cyclesTillNextLine = 38
 	} else if isNextHeading {
 		if isDoubled {
-			v.cyclesTillNextLine = 40
+			v.cyclesTillNextLine = 38
 		} else {
-			v.cyclesTillNextLine = 70
+			v.cyclesTillNextLine = 57
 		}
 	} else if isHeading {
-		v.cyclesTillNextLine = 40
+		v.cyclesTillNextLine = 38
 	} else {
-		v.cyclesTillNextLine = 18
+		v.cyclesTillNextLine = 19
 	}
 }
 
@@ -221,7 +223,7 @@ func (v *Credits) getNewFontLabel(isHeading bool) *d2ui.Label {
 	newLabelItem := &labelItem{
 		Available: false,
 		IsHeading: isHeading,
-		Label:     d2ui.CreateLabel(v.fileProvider, d2resource.FontFormal10, d2enum.Sky),
+		Label:     d2ui.CreateLabel(d2resource.FontFormal10, d2resource.PaletteSky),
 	}
 
 	if isHeading {

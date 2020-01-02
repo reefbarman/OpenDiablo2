@@ -5,14 +5,13 @@ import (
 	"log"
 	"os"
 	"path"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2common"
+	"github.com/OpenDiablo2/D2Shared/d2common"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2enum"
+	"github.com/OpenDiablo2/D2Shared/d2common/d2enum"
 )
 
 /*
@@ -21,6 +20,7 @@ import (
 	UINT32 GameState Version
 	INT64  Game Seed
     BYTE   Hero Type
+	BYTE   Hero Level
     BYTE   Act
     BYTE   Hero Name Length
     BYTE[] Hero Name
@@ -28,23 +28,26 @@ import (
 */
 
 type GameState struct {
-	Seed     int64
-	HeroName string
-	HeroType d2enum.Hero
-	Act      int
-	FilePath string
+	Seed      int64
+	HeroName  string
+	HeroType  d2enum.Hero
+	HeroLevel int
+	Act       int
+	FilePath  string
+	Equipment CharacterEquipment
 }
 
-const GameStateVersion = uint32(1) // Update this when you make breaking changes
+const GameStateVersion = uint32(2) // Update this when you make breaking changes
 
 func HasGameStates() bool {
-	files, _ := ioutil.ReadDir(getGameBaseSavePath())
+	basePath, _ := getGameBaseSavePath()
+	files, _ := ioutil.ReadDir(basePath)
 	return len(files) > 0
 }
 
 func GetAllGameStates() []*GameState {
 	// TODO: Make this not crash tf out on bad files
-	basePath := getGameBaseSavePath()
+	basePath, _ := getGameBaseSavePath()
 	files, _ := ioutil.ReadDir(basePath)
 	result := make([]*GameState, 0)
 	for _, file := range files {
@@ -83,12 +86,13 @@ func LoadGameState(path string) *GameState {
 	}
 	defer f.Close()
 	sr := d2common.CreateStreamReader(bytes)
-	if sr.GetUInt32() > GameStateVersion {
+	if sr.GetUInt32() != GameStateVersion {
 		// Unknown game version
 		return nil
 	}
 	result.Seed = sr.GetInt64()
 	result.HeroType = d2enum.Hero(sr.GetByte())
+	result.HeroLevel = int(sr.GetByte())
 	result.Act = int(sr.GetByte())
 	heroNameLen := sr.GetByte()
 	heroName, _ := sr.ReadBytes(int(heroNameLen))
@@ -108,30 +112,18 @@ func CreateGameState(heroName string, hero d2enum.Hero, hardcore bool) *GameStat
 	return result
 }
 
-func getGameBaseSavePath() string {
-	if runtime.GOOS == "windows" {
-		appDataPath := os.Getenv("APPDATA")
-		basePath := path.Join(appDataPath, "OpenDiablo2", "Saves")
-		if err := os.MkdirAll(basePath, os.ModeDir); err != nil {
-			log.Panicf(err.Error())
-		}
-		return basePath
-	}
-	homeDir, err := os.UserHomeDir()
+func getGameBaseSavePath() (string, error) {
+	configDir, err := os.UserConfigDir()
 	if err != nil {
-		log.Panicf(err.Error())
+		return "", err
 	}
-	basePath := path.Join(homeDir, ".OpenDiablo2", "Saves")
-	if err := os.MkdirAll(basePath, 0755); err != nil {
-		log.Panicf(err.Error())
-	}
-	// TODO: Is mac supposed to have a super special place for the save games?
-	return basePath
+
+	return path.Join(configDir, "OpenDiablo2/Saves"), nil
 }
 
-func getFirstFreefileName() string {
+func getFirstFreeFileName() string {
 	i := 0
-	basePath := getGameBaseSavePath()
+	basePath, _ := getGameBaseSavePath()
 	for {
 		filePath := path.Join(basePath, strconv.Itoa(i)+".od2")
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -143,7 +135,10 @@ func getFirstFreefileName() string {
 
 func (v *GameState) Save() {
 	if v.FilePath == "" {
-		v.FilePath = getFirstFreefileName()
+		v.FilePath = getFirstFreeFileName()
+	}
+	if err := os.MkdirAll(path.Dir(v.FilePath), 0755); err != nil {
+		log.Panic(err.Error())
 	}
 	f, err := os.Create(v.FilePath)
 	if err != nil {
@@ -154,6 +149,7 @@ func (v *GameState) Save() {
 	sr.PushUint32(GameStateVersion)
 	sr.PushInt64(v.Seed)
 	sr.PushByte(byte(v.HeroType))
+	sr.PushByte(byte(v.HeroLevel))
 	sr.PushByte(byte(v.Act))
 	sr.PushByte(byte(len(v.HeroName)))
 	for _, ch := range v.HeroName {

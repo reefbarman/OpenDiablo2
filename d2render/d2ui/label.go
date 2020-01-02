@@ -3,10 +3,7 @@ package d2ui
 import (
 	"image/color"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2interface"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2enum"
-
+	"github.com/OpenDiablo2/OpenDiablo2/d2render/d2surface"
 	"github.com/hajimehoshi/ebiten"
 )
 
@@ -27,8 +24,8 @@ type Label struct {
 	text      string
 	X         int
 	Y         int
-	Width     uint32
-	Height    uint32
+	Width     int
+	Height    int
 	Alignment LabelAlignment
 	font      *Font
 	imageData *ebiten.Image
@@ -36,42 +33,44 @@ type Label struct {
 }
 
 // CreateLabel creates a new instance of a UI label
-func CreateLabel(provider d2interface.FileProvider, font string, palette d2enum.PaletteType) Label {
+func CreateLabel(fontPath, palettePath string) Label {
 	result := Label{
 		Alignment: LabelAlignLeft,
 		Color:     color.White,
-		font:      GetFont(font, palette, provider),
+		font:      GetFont(fontPath, palettePath),
 	}
 	return result
 }
 
-// Draw draws the label on the screen
-func (v *Label) Draw(target *ebiten.Image) {
+// Render draws the label on the screen
+func (v *Label) Render(target *d2surface.Surface) {
 	if len(v.text) == 0 {
 		return
 	}
 	v.cacheImage()
-	opts := &ebiten.DrawImageOptions{}
 
+	x, y := v.X, v.Y
 	if v.Alignment == LabelAlignCenter {
-		opts.GeoM.Translate(float64(v.X-int(v.Width/2)), float64(v.Y))
+		x, y = v.X-int(v.Width/2), v.Y
 	} else if v.Alignment == LabelAlignRight {
-		opts.GeoM.Translate(float64(v.X-int(v.Width)), float64(v.Y))
-	} else {
-		opts.GeoM.Translate(float64(v.X), float64(v.Y))
+		x, y = v.X-int(v.Width), v.Y
 	}
-	opts.CompositeMode = ebiten.CompositeModeSourceAtop
-	opts.Filter = ebiten.FilterNearest
-	target.DrawImage(v.imageData, opts)
+
+	target.PushFilter(ebiten.FilterNearest)
+	target.PushCompositeMode(ebiten.CompositeModeSourceAtop)
+	target.PushTranslation(x, y)
+	defer target.PopN(3)
+
+	target.Render(v.imageData)
 }
 
-// MoveTo moves the label to the specified location
-func (v *Label) MoveTo(x, y int) {
+// SetPosition moves the label to the specified location
+func (v *Label) SetPosition(x, y int) {
 	v.X = x
 	v.Y = y
 }
 
-func (v *Label) GetTextMetrics(text string) (width, height uint32) {
+func (v *Label) GetTextMetrics(text string) (width, height int) {
 	return v.font.GetTextMetrics(text)
 }
 
@@ -83,7 +82,8 @@ func (v *Label) cacheImage() {
 	v.Width = width
 	v.Height = height
 	v.imageData, _ = ebiten.NewImage(int(width), int(height), ebiten.FilterNearest)
-	v.font.Draw(0, 0, v.text, v.Color, v.imageData)
+	surface := d2surface.CreateSurface(v.imageData)
+	v.font.Render(0, 0, v.text, v.Color, surface)
 }
 
 // SetText sets the label's text
@@ -96,7 +96,7 @@ func (v *Label) SetText(newText string) {
 }
 
 // GetSize returns the size of the label
-func (v Label) GetSize() (width, height uint32) {
+func (v Label) GetSize() (width, height int) {
 	v.cacheImage()
 	width = v.Width
 	height = v.Height

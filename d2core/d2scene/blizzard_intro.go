@@ -1,22 +1,19 @@
 package d2scene
 
 import (
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2interface"
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2video"
+	"github.com/OpenDiablo2/D2Shared/d2data/d2video"
+	"github.com/OpenDiablo2/OpenDiablo2/d2asset"
+	"github.com/OpenDiablo2/OpenDiablo2/d2corecommon/d2coreinterface"
 	"github.com/hajimehoshi/ebiten"
 )
 
 type BlizzardIntro struct {
-	fileProvider  d2interface.FileProvider
-	sceneProvider d2interface.SceneProvider
+	sceneProvider d2coreinterface.SceneProvider
 	videoDecoder  *d2video.BinkDecoder
 }
 
-func CreateBlizzardIntro(fileProvider d2interface.FileProvider, sceneProvider d2interface.SceneProvider) *BlizzardIntro {
-	result := &BlizzardIntro{
-		fileProvider:  fileProvider,
-		sceneProvider: sceneProvider,
-	}
+func CreateBlizzardIntro(sceneProvider d2coreinterface.SceneProvider) *BlizzardIntro {
+	result := &BlizzardIntro{sceneProvider: sceneProvider}
 
 	return result
 }
@@ -24,7 +21,10 @@ func CreateBlizzardIntro(fileProvider d2interface.FileProvider, sceneProvider d2
 func (v *BlizzardIntro) Load() []func() {
 	return []func(){
 		func() {
-			videoBytes := v.fileProvider.LoadFile("/data/local/video/BlizNorth640x480.bik")
+			videoBytes, err := d2asset.LoadFile("/data/local/video/BlizNorth640x480.bik")
+			if err != nil {
+				panic(err)
+			}
 			v.videoDecoder = d2video.CreateBinkDecoder(videoBytes)
 		},
 	}

@@ -1,238 +1,197 @@
 package d2render
 
 import (
-	"fmt"
-	"image"
-	"log"
 	"math"
-	"strings"
-	"time"
+	"math/rand"
 
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2cof"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2dcc"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2helper"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2interface"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2enum"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2common"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2data"
-
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2datadict"
-
-	"github.com/hajimehoshi/ebiten"
+	"github.com/OpenDiablo2/D2Shared/d2common/d2enum"
+	"github.com/OpenDiablo2/D2Shared/d2data/d2datadict"
+	"github.com/OpenDiablo2/D2Shared/d2helper"
+	"github.com/OpenDiablo2/OpenDiablo2/d2asset"
+	"github.com/OpenDiablo2/OpenDiablo2/d2render/d2surface"
 )
-
-var DccLayerNames = []string{"HD", "TR", "LG", "RA", "LA", "RH", "LH", "SH", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"}
 
 // AnimatedEntity represents an entity on the map that can be animated
 type AnimatedEntity struct {
-	// LocationX represents the tile X position of the entity
-	LocationX float64
-	// LocationY represents the tile Y position of the entity
-	subcellX, subcellY float64 // Subcell coordinates within the current tile
+	LocationX          float64
 	LocationY          float64
-	dccLayers          map[string]d2dcc.DCC
-	Cof                *d2cof.COF
-	palette            d2enum.PaletteType
-	base               string
-	token              string
+	TileX, TileY       int     // Coordinates of the tile the unit is within
+	subcellX, subcellY float64 // Subcell coordinates within the current tile
 	animationMode      string
 	weaponClass        string
-	lastFrameTime      time.Time
-	framesToAnimate    int
-	animationSpeed     int
 	direction          int
-	currentFrame       int
-	frames             map[string][]*ebiten.Image
-	frameLocations     map[string][]d2common.Rectangle
-	object             *d2datadict.ObjectLookupRecord
+	offsetX, offsetY   int32
+	TargetX            float64
+	TargetY            float64
+	action             int32
+	repetitions        int
+
+	composite *d2asset.Composite
 }
 
 // CreateAnimatedEntity creates an instance of AnimatedEntity
-func CreateAnimatedEntity(x, y int32, object *d2datadict.ObjectLookupRecord, fileProvider d2interface.FileProvider, palette d2enum.PaletteType) AnimatedEntity {
-	result := AnimatedEntity{
-		base:    object.Base,
-		token:   object.Token,
-		object:  object,
-		palette: palette,
+func CreateAnimatedEntity(x, y int32, object *d2datadict.ObjectLookupRecord, palettePath string) (*AnimatedEntity, error) {
+	composite, err := d2asset.LoadComposite(object, palettePath)
+	if err != nil {
+		return nil, err
 	}
-	result.dccLayers = make(map[string]d2dcc.DCC)
-	result.LocationX = float64(x) / 5
-	result.LocationY = float64(y) / 5
 
-	result.subcellX = 1 + math.Mod(float64(x), 5)
-	result.subcellY = 1 + math.Mod(float64(y), 5)
+	entity := &AnimatedEntity{composite: composite}
+	entity.LocationX = float64(x)
+	entity.LocationY = float64(y)
+	entity.TargetX = entity.LocationX
+	entity.TargetY = entity.LocationY
 
-	return result
+	entity.TileX = int(entity.LocationX / 5)
+	entity.TileY = int(entity.LocationY / 5)
+	entity.subcellX = 1 + math.Mod(entity.LocationX, 5)
+	entity.subcellY = 1 + math.Mod(entity.LocationY, 5)
+
+	return entity, nil
 }
-
-// DirectionLookup is used to decode the direction offset indexes
-var DirectionLookup = []int{3, 15, 4, 8, 0, 9, 5, 10, 1, 11, 6, 12, 2, 13, 7, 14}
 
 // SetMode changes the graphical mode of this animated entity
-func (v *AnimatedEntity) SetMode(animationMode, weaponClass string, direction int, provider d2interface.FileProvider) {
-	cofPath := fmt.Sprintf("%s/%s/COF/%s%s%s.COF", v.base, v.token, v.token, animationMode, weaponClass)
-	v.Cof = d2cof.LoadCOF(cofPath, provider)
+func (v *AnimatedEntity) SetMode(animationMode, weaponClass string, direction int) error {
 	v.animationMode = animationMode
-	v.weaponClass = weaponClass
 	v.direction = direction
-	if v.direction >= v.Cof.NumberOfDirections {
-		v.direction = v.Cof.NumberOfDirections - 1
-	}
-	v.frames = make(map[string][]*ebiten.Image)
-	v.frameLocations = make(map[string][]d2common.Rectangle)
-	v.dccLayers = make(map[string]d2dcc.DCC)
-	for _, cofLayer := range v.Cof.CofLayers {
-		layerName := DccLayerNames[cofLayer.Type]
-		v.dccLayers[layerName] = v.LoadLayer(layerName, provider)
-		if !v.dccLayers[layerName].IsValid() {
-			continue
-		}
-		v.cacheFrames(layerName)
+
+	err := v.composite.SetMode(animationMode, weaponClass, direction)
+	if err != nil {
+		err = v.composite.SetMode(animationMode, "HTH", direction)
 	}
 
+	return err
 }
 
-func (v *AnimatedEntity) LoadLayer(layer string, fileProvider d2interface.FileProvider) d2dcc.DCC {
-	layerName := "tr"
-	switch strings.ToUpper(layer) {
-	case "HD": // Head
-		layerName = v.object.HD
-	case "TR": // Torso
-		layerName = v.object.TR
-	case "LG": // Legs
-		layerName = v.object.LG
-	case "RA": // RightArm
-		layerName = v.object.RA
-	case "LA": // LeftArm
-		layerName = v.object.LA
-	case "RH": // RightHand
-		layerName = v.object.RH
-	case "LH": // LeftHand
-		layerName = v.object.LH
-	case "SH": // Shield
-		layerName = v.object.SH
-	case "S1": // Special1
-		layerName = v.object.S1
-	case "S2": // Special2
-		layerName = v.object.S2
-	case "S3": // Special3
-		layerName = v.object.S3
-	case "S4": // Special4
-		layerName = v.object.S4
-	case "S5": // Special5
-		layerName = v.object.S5
-	case "S6": // Special6
-		layerName = v.object.S6
-	case "S7": // Special7
-		layerName = v.object.S7
-	case "S8": // Special8
-		layerName = v.object.S8
-	}
-	if len(layerName) == 0 {
-		return d2dcc.DCC{}
-	}
-	dccPath := fmt.Sprintf("%s/%s/%s/%s%s%s%s%s.dcc", v.base, v.token, layer, v.token, layer, layerName, v.animationMode, v.weaponClass)
-	return d2dcc.LoadDCC(dccPath, fileProvider)
+// If an npc has a path to pause at each location.
+// Waits for animation to end and all repetitions to be exhausted.
+func (v AnimatedEntity) Wait() bool {
+	return v.composite.GetPlayedCount() > v.repetitions
 }
 
 // Render draws this animated entity onto the target
-func (v *AnimatedEntity) Render(target *ebiten.Image, offsetX, offsetY int) {
-	if v.animationSpeed > 0 {
-		for v.lastFrameTime.Add(time.Millisecond * time.Duration(v.animationSpeed)).Before(time.Now()) {
-			v.lastFrameTime = v.lastFrameTime.Add(time.Millisecond * time.Duration(v.animationSpeed))
-			v.currentFrame++
-			if v.currentFrame >= v.framesToAnimate {
-				v.currentFrame = 0
-			}
-		}
+func (v *AnimatedEntity) Render(target *d2surface.Surface) {
+	target.PushTranslation(
+		int(v.offsetX)+int((v.subcellX-v.subcellY)*16),
+		int(v.offsetY)+int(((v.subcellX+v.subcellY)*8)-5),
+	)
+	defer target.Pop()
+	v.composite.Render(target)
+}
+
+func (v AnimatedEntity) GetDirection() int {
+	return v.direction
+}
+
+func (v *AnimatedEntity) getStepLength(tickTime float64) (float64, float64) {
+	speed := 6.0
+	length := tickTime * speed
+
+	angle := 359 - d2helper.GetAngleBetween(
+		v.LocationX,
+		v.LocationY,
+		v.TargetX,
+		v.TargetY,
+	)
+	radians := (math.Pi / 180.0) * float64(angle)
+	oneStepX := length * math.Cos(radians)
+	oneStepY := length * math.Sin(radians)
+	return oneStepX, oneStepY
+}
+
+func (v *AnimatedEntity) Step(tickTime float64) {
+	stepX, stepY := v.getStepLength(tickTime)
+
+	if d2helper.AlmostEqual(v.LocationX, v.TargetX, stepX) {
+		v.LocationX = v.TargetX
 	}
-	for idx := 0; idx < v.Cof.NumberOfLayers; idx++ {
-		priority := v.Cof.Priority[v.direction][v.currentFrame][idx]
-		if int(priority) >= len(DccLayerNames) {
-			continue
-		}
-		frameName := DccLayerNames[priority]
-		if v.frames[frameName] == nil {
-			continue
+	if d2helper.AlmostEqual(v.LocationY, v.TargetY, stepY) {
+		v.LocationY = v.TargetY
+	}
+	if v.LocationX != v.TargetX {
+		v.LocationX += stepX
+	}
+	if v.LocationY != v.TargetY {
+		v.LocationY += stepY
+	}
+
+	v.subcellX = 1 + math.Mod(v.LocationX, 5)
+	v.subcellY = 1 + math.Mod(v.LocationY, 5)
+	v.TileX = int(v.LocationX / 5)
+	v.TileY = int(v.LocationY / 5)
+
+	if v.LocationX == v.TargetX && v.LocationY == v.TargetY {
+		v.repetitions = 3 + rand.Intn(5)
+		newAnimationMode := d2enum.AnimationModeObjectNeutral
+		// TODO: Figure out what 1-3 are for, 4 is correct.
+		switch v.action {
+		case 1:
+			newAnimationMode = d2enum.AnimationModeMonsterNeutral
+		case 2:
+			newAnimationMode = d2enum.AnimationModeMonsterNeutral
+		case 3:
+			newAnimationMode = d2enum.AnimationModeMonsterNeutral
+		case 4:
+			newAnimationMode = d2enum.AnimationModeMonsterSkill1
+			v.repetitions = 0
 		}
 
-		// Location within the current tile
-		localX := ((v.subcellX - v.subcellY) * 16)
-		localY := ((v.subcellX + v.subcellY) * 8) - 4
-
-		// TODO: Transparency op maybe, but it'l murder batch calls
-		opts := &ebiten.DrawImageOptions{}
-		opts.GeoM.Translate(float64(v.frameLocations[frameName][v.currentFrame].Left+offsetX)+localX,
-			float64(v.frameLocations[frameName][v.currentFrame].Top+offsetY)+localY)
-		if err := target.DrawImage(v.frames[frameName][v.currentFrame], opts); err != nil {
-			log.Panic(err.Error())
+		v.composite.ResetPlayedCount()
+		if v.animationMode != newAnimationMode.String() {
+			v.SetMode(newAnimationMode.String(), v.weaponClass, v.direction)
 		}
 	}
 }
 
-func (v *AnimatedEntity) cacheFrames(layerName string) {
-	dcc := v.dccLayers[layerName]
-	v.currentFrame = 0
-	animationData := d2data.AnimationData[strings.ToLower(v.token+v.animationMode+v.weaponClass)][0]
-	v.animationSpeed = int(1000.0 / ((float64(animationData.AnimationSpeed) * 25.0) / 256.0))
-	v.framesToAnimate = animationData.FramesPerDirection
-	v.lastFrameTime = time.Now()
-	minX := int32(10000)
-	minY := int32(10000)
-	maxX := int32(-10000)
-	maxY := int32(-10000)
-	for _, layer := range dcc.Directions {
-		minX = d2helper.MinInt32(minX, int32(layer.Box.Left))
-		minY = d2helper.MinInt32(minY, int32(layer.Box.Top))
-		maxX = d2helper.MaxInt32(maxX, int32(layer.Box.Right()))
-		maxY = d2helper.MaxInt32(maxY, int32(layer.Box.Bottom()))
-	}
-	frameW := maxX - minX
-	frameH := maxY - minY
-	v.frames[layerName] = make([]*ebiten.Image, v.framesToAnimate)
-	v.frameLocations[layerName] = make([]d2common.Rectangle, v.framesToAnimate)
-	for frameIndex := range v.frames[layerName] {
-		v.frames[layerName][frameIndex], _ = ebiten.NewImage(int(frameW), int(frameH), ebiten.FilterNearest)
-		for layerIdx := 0; layerIdx < v.Cof.NumberOfLayers; layerIdx++ {
-			transparency := byte(255)
-			if v.Cof.CofLayers[layerIdx].Transparent {
-				transparency = byte(128)
-			}
+// SetTarget sets target coordinates and changes animation based on proximity and direction
+func (v *AnimatedEntity) SetTarget(tx, ty float64, action int32) {
+	angle := 359 - d2helper.GetAngleBetween(
+		v.LocationX,
+		v.LocationY,
+		tx,
+		ty,
+	)
 
-			direction := dcc.Directions[v.direction]
-			frame := direction.Frames[frameIndex]
-			img := image.NewRGBA(image.Rect(0, 0, int(frameW), int(frameH)))
-			for y := 0; y < direction.Box.Height; y++ {
-				for x := 0; x < direction.Box.Width; x++ {
-					paletteIndex := frame.PixelData[x+(y*direction.Box.Width)]
-
-					if paletteIndex == 0 {
-						continue
-					}
-					color := d2datadict.Palettes[v.palette].Colors[paletteIndex]
-					actualX := x + direction.Box.Left - int(minX)
-					actualY := y + direction.Box.Top - int(minY)
-					img.Pix[(actualX*4)+(actualY*int(frameW)*4)] = color.R
-					img.Pix[(actualX*4)+(actualY*int(frameW)*4)+1] = color.G
-					img.Pix[(actualX*4)+(actualY*int(frameW)*4)+2] = color.B
-					img.Pix[(actualX*4)+(actualY*int(frameW)*4)+3] = transparency
-				}
-			}
-			newImage, _ := ebiten.NewImageFromImage(img, ebiten.FilterNearest)
-			img = nil
-			v.frames[layerName][frameIndex] = newImage
-			v.frameLocations[layerName][frameIndex] = d2common.Rectangle{
-				Left:   int(minX),
-				Top:    int(minY),
-				Width:  int(frameW),
-				Height: int(frameH),
-			}
-		}
+	v.action = action
+	// TODO: Check if is in town and if is player.
+	newAnimationMode := d2enum.AnimationModeMonsterWalk.String()
+	if tx != v.LocationX || ty != v.LocationY {
+		v.TargetX, v.TargetY = tx, ty
+		newAnimationMode = d2enum.AnimationModeMonsterWalk.String()
 	}
+
+	if newAnimationMode != v.animationMode {
+		v.SetMode(newAnimationMode, v.weaponClass, v.direction)
+	}
+
+	newDirection := angleToDirection(float64(angle), v.composite.GetDirectionCount())
+
+	if newDirection != v.GetDirection() {
+		v.SetMode(v.animationMode, v.weaponClass, newDirection)
+	}
+}
+
+func angleToDirection(angle float64, numberOfDirections int) int {
+	if numberOfDirections == 0 {
+		return 0
+	}
+
+	degreesPerDirection := 360.0 / float64(numberOfDirections)
+	offset := 45.0 - (degreesPerDirection / 2)
+	newDirection := int((angle - offset) / degreesPerDirection)
+	if newDirection >= numberOfDirections {
+		newDirection = newDirection - numberOfDirections
+	} else if newDirection < 0 {
+		newDirection = numberOfDirections + newDirection
+	}
+
+	return newDirection
+}
+
+func (v *AnimatedEntity) Advance(elapsed float64) {
+	v.composite.Advance(elapsed)
+}
+
+func (v *AnimatedEntity) GetPosition() (float64, float64) {
+	return float64(v.TileX), float64(v.TileY)
 }

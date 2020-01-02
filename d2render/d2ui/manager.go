@@ -1,12 +1,10 @@
 package d2ui
 
 import (
+	"github.com/OpenDiablo2/D2Shared/d2common/d2resource"
 	"github.com/OpenDiablo2/OpenDiablo2/d2audio"
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2enum"
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2interface"
-	"github.com/OpenDiablo2/OpenDiablo2/d2common/d2resource"
-	"github.com/OpenDiablo2/OpenDiablo2/d2data/d2datadict"
 	"github.com/OpenDiablo2/OpenDiablo2/d2render"
+	"github.com/OpenDiablo2/OpenDiablo2/d2render/d2surface"
 	"github.com/hajimehoshi/ebiten"
 )
 
@@ -23,7 +21,7 @@ const (
 // Manager represents the UI manager
 type Manager struct {
 	widgets            []Widget
-	cursorSprite       d2render.Sprite
+	cursorSprite       *d2render.Sprite
 	cursorButtons      CursorButton
 	pressedIndex       int
 	CursorX            int
@@ -33,11 +31,11 @@ type Manager struct {
 }
 
 // CreateManager creates a new instance of a UI manager
-func CreateManager(fileProvider d2interface.FileProvider, soundManager d2audio.Manager) *Manager {
+func CreateManager(soundManager d2audio.Manager) *Manager {
+	cursorSprite, _ := d2render.LoadSprite(d2resource.CursorDefault, d2resource.PaletteUnits)
 	result := &Manager{
 		pressedIndex:       -1,
-		widgets:            make([]Widget, 0),
-		cursorSprite:       d2render.CreateSprite(fileProvider.LoadFile(d2resource.CursorDefault), d2datadict.Palettes[d2enum.Units]),
+		cursorSprite:       cursorSprite,
 		clickSfx:           soundManager.LoadSoundEffect(d2resource.SFXButtonClick),
 		waitForLeftMouseUp: false,
 	}
@@ -60,22 +58,27 @@ func (v *Manager) WaitForMouseRelease() {
 	v.waitForLeftMouseUp = true
 }
 
-// Draw renders all of the UI elements
-func (v *Manager) Draw(screen *ebiten.Image) {
+// Render renders all of the UI elements
+func (v *Manager) Render(target *d2surface.Surface) {
 	for _, widget := range v.widgets {
-		if !widget.GetVisible() {
-			continue
+		if widget.GetVisible() {
+			widget.Render(target)
 		}
-		widget.Draw(screen)
 	}
 
 	cx, cy := ebiten.CursorPosition()
-	v.cursorSprite.MoveTo(cx, cy)
-	v.cursorSprite.Draw(screen)
+	v.cursorSprite.SetPosition(cx, cy)
+	v.cursorSprite.Render(target)
 }
 
 // Update updates all of the UI elements
-func (v *Manager) Update() {
+func (v *Manager) Advance(elapsed float64) {
+	for _, widget := range v.widgets {
+		if widget.GetVisible() {
+			widget.Advance(elapsed)
+		}
+	}
+
 	v.cursorButtons = 0
 	if ebiten.IsMouseButtonPressed(ebiten.MouseButtonLeft) {
 		if !v.waitForLeftMouseUp {
@@ -96,7 +99,7 @@ func (v *Manager) Update() {
 			if !widget.GetVisible() || !widget.GetEnabled() {
 				continue
 			}
-			wx, wy := widget.GetLocation()
+			wx, wy := widget.GetPosition()
 			ww, wh := widget.GetSize()
 			if v.CursorX >= wx && v.CursorX <= wx+int(ww) && v.CursorY >= wy && v.CursorY <= wy+int(wh) {
 				widget.SetPressed(true)
@@ -123,7 +126,7 @@ func (v *Manager) Update() {
 	} else {
 		if v.pressedIndex > -1 {
 			widget := v.widgets[v.pressedIndex]
-			wx, wy := widget.GetLocation()
+			wx, wy := widget.GetPosition()
 			ww, wh := widget.GetSize()
 			if v.CursorX >= wx && v.CursorX <= wx+int(ww) && v.CursorY >= wy && v.CursorY <= wy+int(wh) {
 				widget.Activate()
